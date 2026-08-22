@@ -271,6 +271,7 @@
       <label>Ticker</label>
       <input type="text" id="inputTicker" placeholder="e.g. D05 or O" autocomplete="off">
       <div class="autocomplete-list" id="tickerAC"></div>
+      <div class="hint">Not in the suggestions? Just type it — the fields below let you add any ticker manually.</div>
     </div>
 
     <div id="newHoldingFields" style="display:none">
@@ -302,15 +303,10 @@
       </div>
     </div>
 
-    <div class="field">
-      <label>Shares held at ex-date</label>
-      <input type="number" inputmode="decimal" id="inputShares" class="mono" placeholder="0">
-    </div>
-
     <div class="row2">
       <div class="field">
-        <label>Amount / share</label>
-        <input type="number" inputmode="decimal" id="inputPerShare" class="mono" placeholder="0.000" step="0.001">
+        <label>Amount received</label>
+        <input type="number" inputmode="decimal" id="inputAmount" class="mono" placeholder="0.00" step="0.01">
       </div>
       <div class="field">
         <label>Payment date</label>
@@ -321,11 +317,17 @@
     <div class="field" id="fxField" style="display:none">
       <label>FX rate → SGD (at payment date)</label>
       <input type="number" inputmode="decimal" id="inputFx" class="mono" placeholder="e.g. 1.35" step="0.0001">
-      <div class="hint">USD amount × this rate = SGD equivalent used in totals.</div>
+      <div class="hint">Native amount × this rate = SGD equivalent used in totals. Check your bank/broker statement for the rate applied.</div>
     </div>
 
     <div class="field">
-      <label>Gross payout</label>
+      <label>Shares held <span style="text-transform:none; font-weight:500;">(optional)</span></label>
+      <input type="number" inputmode="decimal" id="inputShares" class="mono" placeholder="Leave blank if unsure">
+      <div class="hint">Only needed for yield-on-cost tracking on the Holdings tab. Skip it if all you have is the cash amount — the payout still gets logged either way.</div>
+    </div>
+
+    <div class="field" id="grossPreviewField" style="display:none">
+      <label>SGD equivalent</label>
       <input type="text" id="computedGross" class="mono" disabled style="opacity:.6">
     </div>
 
@@ -382,6 +384,18 @@ const TICKERS = [
   {t:"BS6", n:"Yangzijiang Shipbuilding", ex:"SGX", cur:"SGD"},
   {t:"V03", n:"Venture Corporation", ex:"SGX", cur:"SGD"},
   {t:"E5H", n:"Golden Agri-Resources", ex:"SGX", cur:"SGD"},
+  {t:"O5RU", n:"AIMS APAC REIT", ex:"SGX", cur:"SGD"},
+  {t:"9A4U", n:"ESR-REIT", ex:"SGX", cur:"SGD"},
+  {t:"C2PU", n:"Parkway Life REIT", ex:"SGX", cur:"SGD"},
+  {t:"J69U", n:"Frasers Centrepoint Trust", ex:"SGX", cur:"SGD"},
+  {t:"C52", n:"ComfortDelGro Corporation", ex:"SGX", cur:"SGD"},
+  {t:"U96", n:"Sembcorp Industries", ex:"SGX", cur:"SGD"},
+  {t:"S63", n:"Singapore Technologies Engineering", ex:"SGX", cur:"SGD"},
+  {t:"S58", n:"SATS Ltd", ex:"SGX", cur:"SGD"},
+  {t:"U14", n:"UOL Group", ex:"SGX", cur:"SGD"},
+  {t:"K71U", n:"Keppel REIT", ex:"SGX", cur:"SGD"},
+  {t:"OV8", n:"Sheng Siong Group", ex:"SGX", cur:"SGD"},
+  {t:"ES3", n:"SPDR Straits Times Index ETF", ex:"SGX", cur:"SGD"},
   {t:"AAPL", n:"Apple Inc.", ex:"NASDAQ", cur:"USD"},
   {t:"MSFT", n:"Microsoft Corp.", ex:"NASDAQ", cur:"USD"},
   {t:"JNJ", n:"Johnson & Johnson", ex:"NYSE", cur:"USD"},
@@ -543,7 +557,7 @@ function dividendsByYear(){
 }
 
 function yieldOnCost(holding){
-  const relevant = dividends.filter(d=>d.holdingId===holding.id);
+  const relevant = dividends.filter(d=>d.holdingId===holding.id && d.perShare!==null && d.perShare!==undefined);
   if(relevant.length===0 || !holding.avgCost || holding.avgCost<=0) return null;
   const now = new Date();
   const cutoff = new Date(now); cutoff.setMonth(cutoff.getMonth()-12);
@@ -659,7 +673,7 @@ function renderHoldings(){
 }
 function totalReceived(holdingId){ return dividends.filter(d=>d.holdingId===holdingId).reduce((s,d)=>s+d.grossSGD,0); }
 function latestShares(holdingId){
-  const rows = dividends.filter(d=>d.holdingId===holdingId).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const rows = dividends.filter(d=>d.holdingId===holdingId && d.shares).sort((a,b)=>new Date(b.date)-new Date(a.date));
   return rows.length ? rows[0].shares : null;
 }
 function avgFxFor(holdingId){
@@ -874,14 +888,39 @@ function wireAddSheet(){
   const ac = document.getElementById("tickerAC");
 
   tickerInput.addEventListener("input", ()=>{
-    selectedHolding = null;
-    document.getElementById("newHoldingFields").style.display = "none";
     const q = tickerInput.value.trim().toUpperCase();
+    const acctId = activeFormAccountId();
+
+    // exact match against this account's own holdings -> reuse it, no new-holding fields
+    const exactOwn = holdings.find(h=>h.accountId===acctId && h.ticker.toUpperCase()===q);
+    // exact match against the seed reference list -> prefill new-holding fields
+    const exactSeed = TICKERS.find(t=>t.t.toUpperCase()===q);
+
+    if(q && exactOwn){
+      selectedHolding = exactOwn;
+      document.getElementById("newHoldingFields").style.display = "none";
+    } else if(q){
+      // any ticker not already held in this account is treated as new — whether or not
+      // it's in the reference list. This is what makes manual entry always work.
+      selectedHolding = null;
+      document.getElementById("newHoldingFields").style.display = "block";
+      if(exactSeed){
+        document.getElementById("inputName").value = exactSeed.n;
+        document.getElementById("inputExchange").value = exactSeed.ex;
+        document.getElementById("inputCurrency").value = exactSeed.cur;
+      } else if(document.getElementById("inputName").dataset.autofilled !== "false"){
+        document.getElementById("inputName").value = "";
+      }
+      toggleFxField();
+    } else {
+      selectedHolding = null;
+      document.getElementById("newHoldingFields").style.display = "none";
+    }
+
     if(!q){ ac.classList.remove("show"); validateForm(); return; }
 
-    const acctId = activeFormAccountId();
-    const own = holdings.filter(h=>h.accountId===acctId && h.ticker.toUpperCase().includes(q));
-    const seed = TICKERS.filter(t=>!own.some(h=>h.ticker.toUpperCase()===t.t) && (t.t.toUpperCase().includes(q) || t.n.toUpperCase().includes(q)));
+    const own = holdings.filter(h=>h.accountId===acctId && h.ticker.toUpperCase().includes(q) && h.ticker.toUpperCase()!==q);
+    const seed = TICKERS.filter(t=>!own.some(h=>h.ticker.toUpperCase()===t.t) && t.t.toUpperCase()!==q && (t.t.toUpperCase().includes(q) || t.n.toUpperCase().includes(q)));
     const combined = [...own.map(h=>({t:h.ticker,n:h.name,ex:h.exchange,cur:h.currency,existing:true})), ...seed];
 
     ac.innerHTML = "";
@@ -914,7 +953,7 @@ function wireAddSheet(){
   });
 
   document.getElementById("inputCurrency").addEventListener("change", toggleFxField);
-  ["inputShares","inputPerShare","inputFx"].forEach(id=>{
+  ["inputAmount","inputShares","inputFx"].forEach(id=>{
     document.getElementById(id).addEventListener("input", ()=>{ updateGrossPreview(); validateForm(); });
   });
   document.getElementById("inputName").addEventListener("input", validateForm);
@@ -939,25 +978,24 @@ function currentEntryCurrency(){
 }
 
 function updateGrossPreview(){
-  const shares = parseFloat(document.getElementById("inputShares").value)||0;
-  const per = parseFloat(document.getElementById("inputPerShare").value)||0;
+  const amount = parseFloat(document.getElementById("inputAmount").value)||0;
   const cur = currentEntryCurrency();
-  const fx = parseFloat(document.getElementById("inputFx").value)|| (cur==="SGD"?1:0);
-  const gross = shares*per;
-  const grossSGD = cur==="SGD" ? gross : gross*fx;
-  document.getElementById("computedGross").value = gross ? `${cur} ${gross.toFixed(2)}` + (cur!=="SGD" && fx ? `  →  S$${grossSGD.toFixed(2)}` : "") : "";
+  const fx = parseFloat(document.getElementById("inputFx").value)||0;
+  const field = document.getElementById("grossPreviewField");
+  if(cur==="SGD" || !amount || !fx){ field.style.display = "none"; return; }
+  field.style.display = "block";
+  document.getElementById("computedGross").value = `${cur} ${amount.toFixed(2)} × ${fx}  →  S$${(amount*fx).toFixed(2)}`;
 }
 
 function validateForm(){
   const ticker = document.getElementById("inputTicker").value.trim();
-  const shares = parseFloat(document.getElementById("inputShares").value);
-  const per = parseFloat(document.getElementById("inputPerShare").value);
+  const amount = parseFloat(document.getElementById("inputAmount").value);
   const date = document.getElementById("inputDate").value;
   const isNew = !selectedHolding && document.getElementById("newHoldingFields").style.display !== "none";
   const cur = currentEntryCurrency();
   const fx = parseFloat(document.getElementById("inputFx").value);
 
-  let ok = ticker && shares>0 && per>0 && date && activeFormAccountId();
+  let ok = ticker && amount>0 && date && activeFormAccountId();
   if(isNew) ok = ok && document.getElementById("inputName").value.trim();
   if(cur!=="SGD") ok = ok && fx>0;
 
@@ -981,11 +1019,11 @@ async function saveDividend(){
     await idbPut("holdings", holding);
     holdings.push(holding);
   }
-  const shares = parseFloat(document.getElementById("inputShares").value);
-  const perShare = parseFloat(document.getElementById("inputPerShare").value);
+  const shares = parseFloat(document.getElementById("inputShares").value) || null;
+  const gross = parseFloat(document.getElementById("inputAmount").value);
+  const perShare = shares ? gross/shares : null;
   const cur = holding.currency;
   const fx = cur==="SGD" ? 1 : parseFloat(document.getElementById("inputFx").value);
-  const gross = shares*perShare;
   const grossSGD = cur==="SGD" ? gross : gross*fx;
 
   const record = {
@@ -1005,9 +1043,10 @@ function resetSheet(){
   document.getElementById("inputName").value = "";
   document.getElementById("inputCost").value = "";
   document.getElementById("inputShares").value = "";
-  document.getElementById("inputPerShare").value = "";
+  document.getElementById("inputAmount").value = "";
   document.getElementById("inputFx").value = "";
   document.getElementById("computedGross").value = "";
+  document.getElementById("grossPreviewField").style.display = "none";
   document.getElementById("inputDate").valueAsDate = new Date();
   document.getElementById("newHoldingFields").style.display = "none";
   document.getElementById("fxField").style.display = "none";
