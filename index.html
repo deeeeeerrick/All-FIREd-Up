@@ -54,7 +54,8 @@
   .card h2 .more{font-size:12px; color:var(--text2); font-weight:500;}
   .chart-wrap{position:relative; height:180px;}
 
-  .upcoming-row, .tx-row{display:flex; align-items:center; justify-content:space-between; padding:11px 0; border-bottom:1px solid var(--border);}
+  .upcoming-row, .tx-row{display:flex; align-items:center; justify-content:space-between; padding:11px 0; border-bottom:1px solid var(--border); cursor:pointer;}
+  .tx-row:active{opacity:0.6;}
   .upcoming-row:last-child, .tx-row:last-child{border-bottom:none; padding-bottom:0;}
   .tx-left{display:flex; flex-direction:column; gap:2px;}
   .tx-ticker{font-family:var(--mono); font-weight:650; font-size:14px;}
@@ -80,6 +81,19 @@
   .holding-meta div{font-size:12px;}
   .holding-meta .k{color:var(--text2);}
   .holding-meta .v{font-family:var(--mono); font-weight:600; margin-top:1px;}
+  .holding-history-toggle{font-size:11.5px; color:var(--accent); font-weight:600; margin-top:10px; cursor:pointer; user-select:none;}
+  .holding-history{margin-top:8px; border-top:1px solid var(--border); padding-top:8px; display:none;}
+  .holding-history.show{display:block;}
+  .hist-row{display:flex; align-items:center; justify-content:space-between; padding:8px 0; border-bottom:1px solid var(--border); cursor:pointer;}
+  .hist-row:last-child{border-bottom:none;}
+  .hist-row:active{opacity:0.6;}
+  .hist-date{font-size:12px; color:var(--text2); font-family:var(--mono);}
+  .hist-amount{font-family:var(--mono); font-size:13px; font-weight:600; color:var(--accent);}
+  .hist-edit-icon{color:var(--text3); margin-left:8px;}
+  .edit-summary{background:var(--surface2); border:1px solid var(--border); border-radius:var(--r-s); padding:12px 14px; margin-bottom:14px; display:flex; justify-content:space-between; align-items:center;}
+  .edit-summary .et{font-family:var(--mono); font-weight:650; font-size:14px;}
+  .edit-summary .ea{font-size:11px; color:var(--text2); margin-top:2px;}
+  .edit-summary .close-edit{font-size:12px; color:var(--accent); font-weight:600; cursor:pointer;}
 
   nav.tabbar{position:fixed; bottom:0; left:0; right:0; z-index:20; background:rgba(16,20,28,0.94); backdrop-filter:blur(20px); border-top:1px solid var(--border); padding-bottom:env(safe-area-inset-bottom);}
   .tabbar-inner{max-width:520px; margin:0 auto; display:grid; grid-template-columns:1fr 1fr 1fr; height:56px;}
@@ -260,7 +274,15 @@
   <div class="sheet-backdrop" id="sheetBackdrop"></div>
   <div class="sheet" id="addSheet">
     <div class="sheet-handle"></div>
-    <h2>Log a dividend</h2>
+    <h2 id="sheetTitle">Log a dividend</h2>
+
+    <div class="edit-summary" id="editSummary" style="display:none">
+      <div>
+        <div class="et" id="editSummaryTicker"></div>
+        <div class="ea" id="editSummaryAcct"></div>
+      </div>
+      <div class="close-edit" id="cancelEditMode">Not this one</div>
+    </div>
 
     <div class="field" id="acctSelectField">
       <label>Account</label>
@@ -332,6 +354,7 @@
     </div>
 
     <button class="btn btn-primary" id="saveDividend" disabled>Save dividend</button>
+    <button class="btn btn-danger" id="deleteDividendBtn" style="display:none">Delete this entry</button>
     <button class="btn btn-ghost" id="cancelSheet">Cancel</button>
   </div>
 
@@ -613,6 +636,7 @@ function renderDashboard(){
       const row = document.createElement("div");
       row.className = "tx-row";
       row.innerHTML = `<div class="tx-left"><span class="tx-ticker">${h?h.ticker:"?"}${d.currency!=="SGD"?'<span class="fx-flag">FX</span>':''}${currentAccountId==="ALL" && acct ? '<span class="tx-acct">'+acct.name+'</span>':''}</span><span class="tx-date">${fmtDate(d.date)}</span></div><div class="tx-amount">+${fmtSGD(d.grossSGD)}</div>`;
+      row.onclick = ()=> openEditSheet(d.id);
       list.appendChild(row);
     });
   }
@@ -630,6 +654,8 @@ function renderDashboard(){
 }
 
 /* ============ RENDER: HOLDINGS ============ */
+let expandedHoldings = new Set();
+
 function renderHoldings(){
   const scopedHolds = scopedHoldings();
   document.getElementById("holdCount").textContent = scopedHolds.length;
@@ -649,6 +675,8 @@ function renderHoldings(){
     const yoc = yieldOnCost(h);
     const shares = latestShares(h.id);
     const acct = accountById(h.accountId);
+    const txs = dividends.filter(d=>d.holdingId===h.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const expanded = expandedHoldings.has(h.id);
     const div = document.createElement("div");
     div.className = "holding-card";
     div.innerHTML = `
@@ -667,7 +695,18 @@ function renderHoldings(){
         <div><div class="k">Shares</div><div class="v">${shares || "—"}</div></div>
         <div><div class="k">Avg cost</div><div class="v">${h.avgCost ? h.currency+" "+h.avgCost.toFixed(2) : "—"}</div></div>
       </div>
+      <div class="holding-history-toggle" data-hid="${h.id}">${expanded ? "Hide" : "View"} ${txs.length} payout${txs.length===1?"":"s"} · tap any to edit ${expanded?"▴":"▾"}</div>
+      <div class="holding-history ${expanded?"show":""}" id="hist-${h.id}">
+        ${txs.map(d=>`<div class="hist-row" data-did="${d.id}"><span class="hist-date">${fmtDate(d.date)}${d.currency!=="SGD"?' <span class="fx-flag">FX</span>':''}</span><span class="hist-amount">+${fmtSGD(d.grossSGD)}</span></div>`).join("")}
+      </div>
     `;
+    div.querySelector(".holding-history-toggle").addEventListener("click", ()=>{
+      if(expandedHoldings.has(h.id)) expandedHoldings.delete(h.id); else expandedHoldings.add(h.id);
+      renderHoldings();
+    });
+    div.querySelectorAll(".hist-row").forEach(row=>{
+      row.addEventListener("click", ()=> openEditSheet(row.dataset.did));
+    });
     list.appendChild(div);
   });
 }
@@ -868,15 +907,79 @@ function activeFormAccountId(){
   return document.getElementById("inputAccount").value;
 }
 
+let editingDividendId = null;
+
+function openAddSheet(){
+  if(accounts.length===0) return;
+  editingDividendId = null;
+  selectedHolding = null;
+  document.getElementById("editSummary").style.display = "none";
+  document.getElementById("sheetTitle").textContent = "Log a dividend";
+  document.getElementById("tickerField").style.display = "block";
+  document.getElementById("deleteDividendBtn").style.display = "none";
+  document.getElementById("saveDividend").textContent = "Save dividend";
+  populateAccountSelect();
+  document.getElementById("sheetBackdrop").classList.add("show");
+  document.getElementById("addSheet").classList.add("show");
+}
+function closeAddSheet(){
+  document.getElementById("sheetBackdrop").classList.remove("show");
+  document.getElementById("addSheet").classList.remove("show");
+  resetSheet();
+}
+function openEditSheet(divId){
+  const record = dividends.find(d=>d.id===divId);
+  if(!record) return;
+  const holding = holdingById(record.holdingId);
+  if(!holding) return;
+  const acct = accountById(holding.accountId);
+
+  editingDividendId = divId;
+  selectedHolding = holding;
+
+  populateAccountSelect();
+  document.getElementById("inputAccount").value = holding.accountId;
+  document.getElementById("acctSelectField").style.display = "none";
+  document.getElementById("tickerField").style.display = "none";
+  document.getElementById("newHoldingFields").style.display = "none";
+  document.getElementById("editSummary").style.display = "flex";
+  document.getElementById("editSummaryTicker").textContent = holding.ticker + (holding.name ? " · "+holding.name : "");
+  document.getElementById("editSummaryAcct").textContent = acct ? acct.name : "";
+  document.getElementById("sheetTitle").textContent = "Edit dividend";
+
+  const nativeAmount = record.currency==="SGD" ? record.grossSGD : (record.fx ? record.grossSGD/record.fx : record.grossSGD);
+  document.getElementById("inputAmount").value = nativeAmount.toFixed(2);
+  document.getElementById("inputShares").value = record.shares || "";
+  document.getElementById("inputDate").value = record.date;
+  document.getElementById("inputFx").value = record.fx || "";
+  toggleFxField();
+  document.getElementById("deleteDividendBtn").style.display = "block";
+  document.getElementById("saveDividend").textContent = "Save changes";
+  validateForm();
+
+  document.getElementById("sheetBackdrop").classList.add("show");
+  document.getElementById("addSheet").classList.add("show");
+}
+async function deleteDividendRecord(id){
+  const ok = confirm("Delete this dividend entry? This can't be undone.");
+  if(!ok) return;
+  await idbDelete("dividends", id);
+  dividends = dividends.filter(d=>d.id!==id);
+  closeAddSheet();
+  renderAll();
+  showToast("Entry deleted");
+}
+
 function wireAddSheet(){
   const backdrop = document.getElementById("sheetBackdrop");
-  const sheet = document.getElementById("addSheet");
-  const open = ()=>{ if(accounts.length===0) return; populateAccountSelect(); backdrop.classList.add("show"); sheet.classList.add("show"); };
-  const close = ()=>{ backdrop.classList.remove("show"); sheet.classList.remove("show"); resetSheet(); };
 
-  document.getElementById("fabAdd").addEventListener("click", open);
-  document.getElementById("cancelSheet").addEventListener("click", close);
-  backdrop.addEventListener("click", close);
+  document.getElementById("fabAdd").addEventListener("click", openAddSheet);
+  document.getElementById("cancelSheet").addEventListener("click", closeAddSheet);
+  backdrop.addEventListener("click", closeAddSheet);
+  document.getElementById("cancelEditMode").addEventListener("click", openAddSheet);
+  document.getElementById("deleteDividendBtn").addEventListener("click", ()=>{
+    if(editingDividendId) deleteDividendRecord(editingDividendId);
+  });
   document.getElementById("inputAccount").addEventListener("change", ()=>{
     document.getElementById("inputTicker").value = "";
     selectedHolding = null;
@@ -960,10 +1063,11 @@ function wireAddSheet(){
   document.getElementById("inputCost").addEventListener("input", validateForm);
 
   document.getElementById("saveDividend").addEventListener("click", async ()=>{
+    const wasEdit = !!editingDividendId;
     await saveDividend();
-    close();
+    closeAddSheet();
     renderAll();
-    showToast("Dividend saved");
+    showToast(wasEdit ? "Changes saved" : "Dividend saved");
   });
 }
 
@@ -988,7 +1092,7 @@ function updateGrossPreview(){
 }
 
 function validateForm(){
-  const ticker = document.getElementById("inputTicker").value.trim();
+  const ticker = selectedHolding ? selectedHolding.ticker : document.getElementById("inputTicker").value.trim();
   const amount = parseFloat(document.getElementById("inputAmount").value);
   const date = document.getElementById("inputDate").value;
   const isNew = !selectedHolding && document.getElementById("newHoldingFields").style.display !== "none";
@@ -1026,6 +1130,20 @@ async function saveDividend(){
   const fx = cur==="SGD" ? 1 : parseFloat(document.getElementById("inputFx").value);
   const grossSGD = cur==="SGD" ? gross : gross*fx;
 
+  if(editingDividendId){
+    const existing = dividends.find(d=>d.id===editingDividendId);
+    if(existing){
+      existing.date = document.getElementById("inputDate").value;
+      existing.shares = shares;
+      existing.perShare = perShare;
+      existing.currency = cur;
+      existing.fx = cur==="SGD" ? null : fx;
+      existing.grossSGD = grossSGD;
+      await idbPut("dividends", existing);
+    }
+    return;
+  }
+
   const record = {
     id: uid(),
     holdingId: holding.id,
@@ -1051,7 +1169,13 @@ function resetSheet(){
   document.getElementById("newHoldingFields").style.display = "none";
   document.getElementById("fxField").style.display = "none";
   document.getElementById("tickerAC").classList.remove("show");
+  document.getElementById("editSummary").style.display = "none";
+  document.getElementById("tickerField").style.display = "block";
+  document.getElementById("deleteDividendBtn").style.display = "none";
+  document.getElementById("sheetTitle").textContent = "Log a dividend";
+  document.getElementById("saveDividend").textContent = "Save dividend";
   selectedHolding = null;
+  editingDividendId = null;
   document.getElementById("saveDividend").disabled = true;
 }
 
